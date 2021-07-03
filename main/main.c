@@ -23,6 +23,7 @@
 #include "network_common.h"
 #include "sntpController.h"
 #include "display.h"
+#include "transitions.h"
 
 static int counting(gpio_evt_msg *message);
 static void gpio_task();
@@ -65,8 +66,25 @@ static void gpio_task()
 
 static int counting(gpio_evt_msg *message)
 {
-    //TODO: intergrate your cornercase handler
-    return 0;
+	ESP_LOGI(TAG, "GPIO event triggered! Pin: %d , Level: %d", message->rtc_gpio_num, message->level);
+
+	// under the assumption that GPIO_PIN_1 is the outer pin
+	// TODO: in the wake function the pin is changed
+	// now 4 is the outer and 5 is the inner
+	int state_change = (message->rtc_gpio_num == 4) ? OUTER_STATE_CHANGE : INNER_STATE_CHANGE;
+
+	int change = transition_handling(state_change);
+
+	// just for checking, remove for power measurement
+	print_sensor_and_fsm_state(gpio_get_level(RTC_PIN_1), gpio_get_level(RTC_PIN_2));
+
+	if(change == 0){
+		return 0;
+	}
+	// -1 or +1 here
+	count = count + change;
+	//count_changes(message.timestamp, count);
+	return 0;
 }
 
 static void realtime_now(int64_t *timestamp_ms)
