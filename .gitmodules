@@ -1,0 +1,3 @@
+[submodule "components/ssd1306"]
+	path = components/ssd1306
+	url = git@gitlab.lrz.de:iot-lab-ss21-group4/ssd1306.git
