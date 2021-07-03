@@ -26,6 +26,7 @@
 #include "transitions.h"
 
 static int counting(gpio_evt_msg *message);
+static void count_changes(int64_t timestamp_ms, int count);
 static void gpio_task();
 static void send_task();
 static void ulp_isr(void *arg);
@@ -49,6 +50,8 @@ static SemaphoreHandle_t sema = NULL;
 
 extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
 extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
+
+static esp_mqtt_client_handle_t client = NULL;
 
 static void gpio_task()
 {
@@ -83,8 +86,35 @@ static int counting(gpio_evt_msg *message)
 	}
 	// -1 or +1 here
 	count = count + change;
-	//count_changes(message.timestamp, count);
+	count_changes(message->timestamp_10us * MS_TO_10US_FACTOR, count);
 	return 0;
+}
+
+static void count_changes(int64_t timestamp_ms, int count)
+{
+    if (count_data_n >= COUNT_DATA_N_MAX)
+    {
+        ESP_LOGW(TAG, "not enough space to store");
+        return;
+    }
+    count_data[count_data_n].timestamp_ms = timestamp_ms;
+    count_data[count_data_n].count = count;
+    count_data_n += 1;
+}
+
+void publish_rtc_data(void)
+{
+    /*use snprintf to avoid buffer overflow,
+    change buffer length if the message becomes longer*/
+	ESP_LOGI(TAG, "Publish RTC data");
+    size_t buf_len = 40;
+    char buf[buf_len];
+    for (int i = 0; i < count_data_n; i++)
+    {
+        snprintf(buf, buf_len, "time: %lld, count: %d", count_data[i].timestamp_ms, count_data[i].count);
+        mqtt_send(client, "test", buf);
+    }
+    count_data_n = 0;
 }
 
 static void realtime_now(int64_t *timestamp_ms)
@@ -114,15 +144,32 @@ static void send_task()
 
 void app_main(void)
 {
+	ESP_LOGI(TAG, "Reset board. Reason %d", esp_reset_reason());
+
     if (esp_reset_reason() == ESP_RST_POWERON)
     {
         printf("reset count to zero\n");
         count = 0;
-        /*start_wifi();
+        start_wifi();
         initializeSntp();
-        obtainTime();*/
+        obtainTime();
         init_ulp_program();
     }
+
+    if ((esp_reset_reason() == ESP_RST_DEEPSLEEP) && (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER))
+	{
+		if (count_data_n)
+		{
+			start_wifi();
+			start_mqtt(&client);
+			publish_rtc_data();
+		}
+		else
+		{
+			printf("nothing to publish\n");
+		}
+	}
+
     sema = xSemaphoreCreateBinary();
     assert(sema);
 
